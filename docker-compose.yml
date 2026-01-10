@@ -1,0 +1,17 @@
+services:
+  email-api:
+    image: ghcr.io/mikayil-dev/email-api:latest
+    container_name: email-api
+    restart: unless-stopped
+    ports:
+      - "3411:3000"
+    environment:
+      - PORT=3000
+      - API_KEY=${API_KEY}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
+      - TO_EMAIL=${TO_EMAIL}
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT}
+      - SMTP_SECURE=${SMTP_SECURE}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASS=${SMTP_PASS}
