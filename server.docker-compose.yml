@@ -1,9 +1,0 @@
-# NOTE: DOCUMENTATION - this goes on the server only 
-# and doesn't get used anywhere else
-services:
-  imgthemer:
-    image: ghcr.io/mikayil-dev/email-api:latest
-    container_name: email-api
-    restart: unless-stopped
-    ports:
-      - "3411:3000"
