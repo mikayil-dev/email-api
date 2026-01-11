@@ -26,6 +26,8 @@ function validateBody(body: unknown): body is ContactFormData {
     typeof b.email === "string" &&
     typeof b.name === "string" &&
     typeof b.message === "string" &&
+    ((b.phone && typeof b.phone === "string" && b.phone.length > 0) ||
+      !b.phone) &&
     b.email.includes("@") &&
     b.name.length > 0 &&
     b.message.length > 0
@@ -125,7 +127,7 @@ const server = Bun.serve({
 
     try {
       await sendContactEmail(body, originConfig);
-      log("info", "Email sent", { ip, origin  });
+      log("info", "Email sent", { ip, origin });
       return json({ success: true }, 200, cors);
     } catch (err) {
       log("error", "Failed to send email", {

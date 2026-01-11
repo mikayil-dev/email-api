@@ -5,13 +5,14 @@ export interface ContactFormData {
   email: string;
   name: string;
   message: string;
+  phone?: string;
 }
 
 export async function sendContactEmail(
   data: ContactFormData,
   originConfig: OriginConfig,
 ): Promise<void> {
-  const { email, name, message } = data;
+  const { email, name, message, phone } = data;
   const { toEmail, smtp } = originConfig;
   const originName = originConfig.name;
 
@@ -27,12 +28,11 @@ export async function sendContactEmail(
 
   await transporter.sendMail({
     from: `"${name}" <${smtp.user}>`,
-    replyTo: email,
     to: toEmail,
     subject: `[Contact|Kontakt] - ${originName} - ${name}`,
-    text: `From: ${name} <${email}>\n\n${message}`,
+    text: `From: ${name} <${email}> ${phone ? `<${phone}>` : ""}\n\n${message}`,
     html: `
-      <p><strong>From:</strong> ${escapeHtml(name)} &lt;${escapeHtml(email)}&gt;</p>
+      <p><strong>From:</strong> ${escapeHtml(name)} &lt;${escapeHtml(email)} ${phone ? `&lt;${escapeHtml(phone)}` : ""}&gt;</p>
       <hr>
       <p>${escapeHtml(message).replace(/\n/g, "<br>")}</p>
     `.trim(),
