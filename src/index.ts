@@ -1,4 +1,4 @@
-import { config } from "./config";
+import { config, getOriginConfig, isAllowedOrigin } from "./config";
 import { sendContactEmail } from "./mailer";
 import type { ContactFormData } from "./mailer";
 
@@ -25,22 +25,19 @@ function validateBody(body: unknown): body is ContactFormData {
   return (
     typeof b.email === "string" &&
     typeof b.name === "string" &&
-    typeof b.subject === "string" &&
     typeof b.message === "string" &&
     b.email.includes("@") &&
     b.name.length > 0 &&
-    b.subject.length > 0 &&
     b.message.length > 0
   );
 }
 
 function corsHeaders(origin: string | null): HeadersInit {
-  const allowedOrigin =
-    origin && config.allowedOrigins.includes(origin) ? origin : "";
+  const allowedOrigin = origin && isAllowedOrigin(origin) ? origin : "";
   return {
     "Access-Control-Allow-Origin": allowedOrigin,
     "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, X-API-Key",
+    "Access-Control-Allow-Headers": "Content-Type",
   };
 }
 
@@ -55,6 +52,27 @@ function json(
   });
 }
 
+function log(
+  level: "info" | "warn" | "error",
+  message: string,
+  meta?: Record<string, unknown>,
+): void {
+  const entry = {
+    timestamp: new Date().toISOString(),
+    level,
+    message,
+    ...meta,
+  };
+  const output = JSON.stringify(entry);
+  if (level === "error") {
+    console.error(output);
+  } else if (level === "warn") {
+    console.warn(output);
+  } else {
+    console.info(output);
+  }
+}
+
 const server = Bun.serve({
   port: config.port,
 
@@ -67,21 +85,24 @@ const server = Bun.serve({
       return new Response(null, { status: 204, headers: cors });
     }
 
-    if (url.pathname !== "/api/send" || req.method !== "POST") {
-      return json({ error: "Not found" }, 404, cors);
-    }
-
-    const apiKey = req.headers.get("X-API-Key");
-    if (apiKey !== config.apiKey) {
-      return json({ error: "Unauthorized" }, 401, cors);
-    }
-
     const ip =
       req.headers.get("X-Forwarded-For")?.split(",")[0].trim() ??
       server.requestIP(req)?.address ??
       "unknown";
 
+    if (url.pathname !== "/api/send" || req.method !== "POST") {
+      log("warn", "Not found", { ip, path: url.pathname, method: req.method });
+      return json({ error: "Not found" }, 404, cors);
+    }
+
+    const originConfig = getOriginConfig(origin);
+    if (!originConfig) {
+      log("warn", "Forbidden origin", { ip, origin });
+      return json({ error: "Forbidden" }, 403, cors);
+    }
+
     if (isRateLimited(ip)) {
+      log("warn", "Rate limited", { ip });
       return json({ error: "Too many requests" }, 429, cors);
     }
 
@@ -89,25 +110,32 @@ const server = Bun.serve({
     try {
       body = await req.json();
     } catch {
+      log("warn", "Invalid JSON", { ip });
       return json({ error: "Invalid JSON" }, 400, cors);
     }
 
     if (!validateBody(body)) {
+      log("warn", "Invalid body", { ip });
       return json(
-        { error: "Invalid body. Required: email, name, subject, message" },
+        { error: "Invalid body. Required: email, name, message" },
         400,
         cors,
       );
     }
 
     try {
-      await sendContactEmail(body);
+      await sendContactEmail(body, originConfig);
+      log("info", "Email sent", { ip, origin  });
       return json({ success: true }, 200, cors);
     } catch (err) {
-      console.error("Failed to send email:", err);
+      log("error", "Failed to send email", {
+        ip,
+        origin,
+        error: err instanceof Error ? err.message : String(err),
+      });
       return json({ error: "Failed to send email" }, 500, cors);
     }
   },
 });
 
-console.info(`Email API running on http://localhost:${server.port}`);
+log("info", "Server started", { port: server.port });

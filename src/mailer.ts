@@ -1,32 +1,35 @@
 import nodemailer from "nodemailer";
-import type { Transporter } from "nodemailer";
-import { config } from "./config";
-
-const transporter: Transporter = nodemailer.createTransport({
-  host: config.smtp.host,
-  port: config.smtp.port,
-  secure: config.smtp.secure,
-  auth: {
-    user: config.smtp.user,
-    pass: config.smtp.pass,
-  },
-});
+import type { OriginConfig } from "./config";
 
 export interface ContactFormData {
   email: string;
   name: string;
-  subject: string;
   message: string;
 }
 
-export async function sendContactEmail(data: ContactFormData): Promise<void> {
-  const { email, name, subject, message } = data;
+export async function sendContactEmail(
+  data: ContactFormData,
+  originConfig: OriginConfig,
+): Promise<void> {
+  const { email, name, message } = data;
+  const { toEmail, smtp } = originConfig;
+  const originName = originConfig.name;
+
+  const transporter = nodemailer.createTransport({
+    host: smtp.host,
+    port: smtp.port,
+    secure: smtp.secure,
+    auth: {
+      user: smtp.user,
+      pass: smtp.pass,
+    },
+  });
 
   await transporter.sendMail({
-    from: `"${name}" <${config.smtp.user}>`,
+    from: `"${name}" <${smtp.user}>`,
     replyTo: email,
-    to: config.toEmail,
-    subject: `[Contact Form] ${subject}`,
+    to: toEmail,
+    subject: `[Contact|Kontakt] - ${originName} - ${name}`,
     text: `From: ${name} <${email}>\n\n${message}`,
     html: `
       <p><strong>From:</strong> ${escapeHtml(name)} &lt;${escapeHtml(email)}&gt;</p>

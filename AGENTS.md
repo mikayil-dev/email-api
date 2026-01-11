@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Minimal email API service built with Bun for handling contact form submissions from static websites. Uses nodemailer for SMTP transport.
+Minimal email API service built with Bun for handling contact form submissions from static websites. Supports multiple origins with separate SMTP configurations per domain. Uses nodemailer for SMTP transport.
 
 ## Tech Stack
 
@@ -17,10 +17,10 @@ Minimal email API service built with Bun for handling contact form submissions f
 
 ```bash
 # Development (hot reload)
-bun run dev
+CONFIG_FILE=./origins.json bun run dev
 
 # Production
-bun run start
+CONFIG_FILE=/path/to/origins.json bun run start
 
 # Type checking
 bun run typecheck
@@ -30,7 +30,7 @@ bun run lint
 bun run lint:fix
 
 # Run a single file
-bun src/index.ts
+CONFIG_FILE=./origins.json bun src/index.ts
 ```
 
 No test framework is configured yet. When adding tests, use `bun:test`:
@@ -46,9 +46,56 @@ bun test --watch            # Watch mode
 
 ```
 src/
-├── index.ts    # HTTP server, routing, middleware (CORS, auth, rate limiting)
-├── config.ts   # Environment variable validation and typed config
-└── mailer.ts   # Nodemailer transport and email sending logic
+├── index.ts    # HTTP server, routing, middleware (CORS, rate limiting)
+├── config.ts   # JSON config file loading and validation, per-origin config lookup
+└── mailer.ts   # Nodemailer transport and email sending logic (per-origin SMTP)
+```
+
+## Configuration
+
+The app uses a JSON config file instead of environment variables for origin/SMTP settings.
+
+### Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `CONFIG_FILE` | Yes | Path to the origins JSON config file |
+| `PORT` | No | Server port (default: 3000) |
+
+### Origins Config File (`origins.json`)
+
+Maps origin domains to their SMTP settings. See `origins.example.json` for reference:
+
+```json
+{
+  "https://example.com": {
+    "toEmail": "contact@example.com",
+    "smtp": {
+      "host": "smtp.example.com",
+      "port": 587,
+      "secure": false,
+      "user": "smtp-user@example.com",
+      "pass": "your-smtp-password"
+    }
+  }
+}
+```
+
+### Config Types (from `config.ts`)
+
+```typescript
+interface SmtpConfig {
+  host: string;
+  port: number;      // default: 587
+  secure: boolean;   // default: false
+  user: string;
+  pass: string;
+}
+
+interface OriginConfig {
+  toEmail: string;
+  smtp: SmtpConfig;
+}
 ```
 
 ## Code Style
@@ -67,7 +114,6 @@ src/
 - Use `type` imports: `import type { Foo } from "./bar"`
 - No `any` - use `unknown` and narrow with type guards
 - Prefer `const` assertions for config objects: `as const`
-- Function overloads for polymorphic functions (see `config.ts`)
 
 ### ESLint Rules
 
@@ -94,10 +140,10 @@ src/
 4. Type-only imports last
 
 ```typescript
-import { something } from "node:fs";
+import { readFileSync } from "node:fs";
 import nodemailer from "nodemailer";
-import { config } from "./config";
-import type { ContactFormData } from "./mailer";
+import { config, getOriginConfig } from "./config";
+import type { OriginConfig } from "./config";
 ```
 
 ## Error Handling
@@ -119,16 +165,6 @@ catch (err) {
 }
 ```
 
-## Environment Variables
-
-All required env vars are validated at startup in `config.ts`. The app crashes fast if any are missing.
-
-Required variables (see `.env.example`):
-- `API_KEY` - Authentication for API requests
-- `ALLOWED_ORIGINS` - Comma-separated CORS whitelist
-- `TO_EMAIL` - Recipient for contact form emails
-- `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS` - SMTP credentials
-
 ## HTTP Patterns
 
 ### Response Helper
@@ -141,11 +177,19 @@ function json(data: unknown, status: number, headers?: HeadersInit): Response
 
 ### CORS
 
-CORS headers are computed per-request based on `ALLOWED_ORIGINS`. Always include them in responses.
+CORS is determined by origins in the config file. Only configured origins receive proper CORS headers.
 
-### Authentication
+### Origin-Based Config Resolution
 
-API key via `X-API-Key` header. Check before processing any request.
+Each request's `Origin` header determines which SMTP config is used:
+
+```typescript
+const originConfig = getOriginConfig(origin);
+if (!originConfig) {
+  return json({ error: "Forbidden" }, 403, cors);
+}
+await sendContactEmail(body, originConfig);
+```
 
 ### Rate Limiting
 
@@ -153,10 +197,11 @@ In-memory per-IP rate limiting. 5 requests per minute per IP. Resets after the w
 
 ## Security Considerations
 
-- Never log sensitive data (API keys, passwords, email content)
+- Never log sensitive data (passwords, email content)
 - Always escape HTML in email bodies to prevent XSS
 - Validate all input with type guards before use
 - Use `replyTo` instead of `from` for visitor emails (SPF/DKIM compliance)
+- CORS origin validation acts as access control (no API key needed)
 
 ## Adding New Features
 
@@ -167,7 +212,9 @@ In-memory per-IP rate limiting. 5 requests per minute per IP. Resets after the w
 
 ## Common Gotchas
 
-- Bun auto-loads `.env` files - no dotenv needed
+- Config is loaded from JSON file at startup, not from `.env`
+- `CONFIG_FILE` env var must be set or app won't start
 - `Bun.serve` returns a server object with `requestIP()` method
 - nodemailer's `sendMail` returns a promise - always await it
 - Type guards must return `body is T` for TypeScript narrowing
+- SMTP transporter is created per-request (different origins may have different SMTP servers)

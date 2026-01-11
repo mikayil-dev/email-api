@@ -1,0 +1,24 @@
+{
+  "https://example.com": {
+    "name": "Example Site",
+    "toEmail": "contact@example.com",
+    "smtp": {
+      "host": "smtp.example.com",
+      "port": 587,
+      "secure": false,
+      "user": "smtp-user@example.com",
+      "pass": "your-smtp-password"
+    }
+  },
+  "https://another-site.com": {
+    "name": "Another Example Site",
+    "toEmail": "hello@another-site.com",
+    "smtp": {
+      "host": "smtp.another-provider.com",
+      "port": 465,
+      "secure": true,
+      "user": "noreply@another-site.com",
+      "pass": "another-smtp-password"
+    }
+  }
+}
