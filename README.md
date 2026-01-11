@@ -1,6 +1,7 @@
 # email-api
 
-Minimal email API for contact form submissions from static websites. Supports multiple origins with separate SMTP configurations.
+Minimal email API for contact form submissions from static websites. Specialized for some of my and my friends smaller websites.
+Supports multiple origins with separate SMTP configurations.
 
 ## Setup
 
@@ -16,10 +17,10 @@ Configuration is loaded from a JSON file specified by the `CONFIG_FILE` environm
 
 ### Environment Variables
 
-| Variable | Description |
-|----------|-------------|
+| Variable      | Description                                        |
+| ------------- | -------------------------------------------------- |
 | `CONFIG_FILE` | **Required.** Path to the origins JSON config file |
-| `PORT` | Server port (default: 3000) |
+| `PORT`        | Server port (default: 3000)                        |
 
 ### Origins Config File
 
@@ -50,14 +51,14 @@ The config file maps origin domains to their SMTP settings:
 }
 ```
 
-| Field | Description |
-|-------|-------------|
-| `toEmail` | Recipient email address for contact form submissions |
-| `smtp.host` | SMTP server hostname |
-| `smtp.port` | SMTP port (default: 587) |
-| `smtp.secure` | Use TLS (default: false, set true for port 465) |
-| `smtp.user` | SMTP username |
-| `smtp.pass` | SMTP password |
+| Field         | Description                                          |
+| ------------- | ---------------------------------------------------- |
+| `toEmail`     | Recipient email address for contact form submissions |
+| `smtp.host`   | SMTP server hostname                                 |
+| `smtp.port`   | SMTP port (default: 587)                             |
+| `smtp.secure` | Use TLS (default: false, set true for port 465)      |
+| `smtp.user`   | SMTP username                                        |
+| `smtp.pass`   | SMTP password                                        |
 
 ## Run
 
@@ -94,11 +95,13 @@ services:
 Send a contact form email. The request's `Origin` header determines which SMTP config is used.
 
 **Headers:**
+
 ```
 Content-Type: application/json
 ```
 
 **Body:**
+
 ```json
 {
   "email": "visitor@example.com",
@@ -109,11 +112,13 @@ Content-Type: application/json
 ```
 
 **Response:**
+
 ```json
 { "success": true }
 ```
 
 **Error Responses:**
+
 - `403 Forbidden` - Origin not in config file
 - `400 Bad Request` - Invalid JSON or missing fields
 - `429 Too Many Requests` - Rate limited

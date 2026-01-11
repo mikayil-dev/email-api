@@ -57,10 +57,10 @@ The app uses a JSON config file instead of environment variables for origin/SMTP
 
 ### Environment Variables
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `CONFIG_FILE` | Yes | Path to the origins JSON config file |
-| `PORT` | No | Server port (default: 3000) |
+| Variable      | Required | Description                          |
+| ------------- | -------- | ------------------------------------ |
+| `CONFIG_FILE` | Yes      | Path to the origins JSON config file |
+| `PORT`        | No       | Server port (default: 3000)          |
 
 ### Origins Config File (`origins.json`)
 
@@ -86,8 +86,8 @@ Maps origin domains to their SMTP settings. See `origins.example.json` for refer
 ```typescript
 interface SmtpConfig {
   host: string;
-  port: number;      // default: 587
-  secure: boolean;   // default: false
+  port: number; // default: 587
+  secure: boolean; // default: false
   user: string;
   pass: string;
 }
@@ -172,7 +172,7 @@ catch (err) {
 Use the `json()` helper for all responses:
 
 ```typescript
-function json(data: unknown, status: number, headers?: HeadersInit): Response
+function json(data: unknown, status: number, headers?: HeadersInit): Response;
 ```
 
 ### CORS
