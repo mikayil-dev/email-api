@@ -30,10 +30,11 @@ export async function sendContactEmail(
     from: `"Contact: ${name}" <${smtp.user}>`,
     to: toEmail,
     subject: `[Contact] - ${originName} - ${name}`,
-    text: `From: ${name} <${email}> ${phone ? `<${phone}>` : ""}\n\n${message}`,
+    text: `From: ${name} <${email}> ${phone ? `<${phone}>` : ""}\n\nvia ${originName}\n\n${message}`,
     html: `
       <p><strong>From:</strong> ${escapeHtml(name)} - ${escapeHtml(email)} ${phone ? `- ${escapeHtml(phone)}` : ""}</p>
       <hr>
+      via ${originName}<br><br>
       <p>${escapeHtml(message).replace(/\n/g, "<br>")}</p>
     `.trim(),
   });
