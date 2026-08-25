@@ -1,38 +1,10 @@
 import { config, getOriginConfig, isAllowedOrigin } from "./config";
+import { validateContactFormData } from "./contact-form";
 import { sendContactEmail } from "./mailer";
 import { RateLimiter } from "./rate-limiter";
 
-import type { ContactFormData } from "./mailer";
-
 const MAX_BODY_BYTES = 32_768;
 const rateLimiter = new RateLimiter(config.rateLimit, config.rateWindowMs);
-
-function isStringWithin(
-  value: unknown,
-  minimum: number,
-  maximum: number,
-): value is string {
-  return (
-    typeof value === "string" &&
-    value.length >= minimum &&
-    value.length <= maximum
-  );
-}
-
-function validateBody(body: unknown): body is ContactFormData {
-  if (typeof body !== "object" || body === null || Array.isArray(body)) {
-    return false;
-  }
-  const value = body as Record<string, unknown>;
-  return (
-    isStringWithin(value.email, 3, 320) &&
-    value.email.includes("@") &&
-    isStringWithin(value.name, 1, 160) &&
-    isStringWithin(value.message, 1, 10_000) &&
-    (value.phone === undefined || isStringWithin(value.phone, 1, 80)) &&
-    (value.website === undefined || typeof value.website === "string")
-  );
-}
 
 function corsHeaders(origin: string | null): HeadersInit {
   const headers: Record<string, string> = {
@@ -130,7 +102,7 @@ const server = Bun.serve({
     } catch {
       return json({ error: "Invalid JSON" }, 400, cors);
     }
-    if (!validateBody(body)) {
+    if (!validateContactFormData(body)) {
       return json(
         { error: "Invalid body. Required: email, name, message" },
         400,
