@@ -5,20 +5,27 @@
   "scripts": {
     "dev": "bun --hot src/index.ts",
     "start": "bun src/index.ts",
-    "lint": "eslint src/",
-    "lint:fix": "eslint src/ --fix",
-    "typecheck": "tsc --noEmit"
+    "site:upsert": "bun src/admin.ts",
+    "config:migrate": "bun src/migrate-config.ts",
+    "test": "CONFIG_FILE=origins.example.json bun test",
+    "lint": "node node_modules/eslint/bin/eslint.js src/",
+    "lint:fix": "node node_modules/eslint/bin/eslint.js src/ --fix",
+    "typecheck": "node node_modules/typescript/bin/tsc --noEmit",
+    "format": "node node_modules/prettier/bin/prettier.cjs . --write",
+    "format:check": "node node_modules/prettier/bin/prettier.cjs . --check",
+    "validate": "bun run format:check && bun run lint && bun run typecheck && bun run test"
   },
   "devDependencies": {
-    "@eslint/js": "^9.18.0",
-    "@types/bun": "latest",
-    "@types/nodemailer": "^7.0.5",
-    "eslint": "^9.18.0",
-    "globals": "^15.14.0",
-    "typescript": "^5.7.3",
-    "typescript-eslint": "^8.21.0"
+    "@eslint/js": "^10.0.1",
+    "@types/bun": "^1.4.0",
+    "@types/nodemailer": "^7.0.12",
+    "eslint": "^10.9.1",
+    "globals": "^17.11.0",
+    "prettier": "^3.9.6",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.68.0"
   },
   "dependencies": {
-    "nodemailer": "^7.0.12"
+    "nodemailer": "^7.0.13"
   }
 }

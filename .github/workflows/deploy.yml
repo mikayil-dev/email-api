@@ -17,7 +17,15 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Validate
+        run: |
+          bun install --frozen-lockfile
+          bun run validate
 
       - name: Log in to GHCR
         run: |
@@ -25,10 +33,10 @@ jobs:
             -u "${{ github.actor }}" --password-stdin
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
@@ -39,18 +47,28 @@ jobs:
           cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/email-api:buildcache,mode=max
 
       - name: Deploy on VPS
-        uses: appleboy/ssh-action@v1.0.0
+        uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 2222
           script: |
-            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io \
-              -u "${{ secrets.GHCR_USER }}" --password-stdin
+            set -eu
 
             cd /srv/email-api
 
+            candidate=$(mktemp docker-compose.yml.XXXXXX)
+            trap 'rm -f "$candidate"' EXIT
+            curl --fail --silent --show-error --location \
+              "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/docker-compose.yml" \
+              --output "$candidate"
+            docker compose -f "$candidate" config --quiet
+            install -m 0644 "$candidate" docker-compose.yml
+            rm -f "$candidate"
+            trap - EXIT
+
             docker compose pull email-api
             docker compose up -d email-api
-            docker image prune -f
+            curl --fail --retry 10 --retry-all-errors \
+              --retry-delay 3 http://127.0.0.1:3411/healthz >/dev/null

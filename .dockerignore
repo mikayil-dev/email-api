@@ -1,0 +1,9 @@
+.git
+.github
+.env*
+AGENTS.md
+README.md
+node_modules
+origins.json
+src/*.test.ts
+

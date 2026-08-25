@@ -1,160 +1,132 @@
 # email-api
 
-Minimal email API for contact form submissions from static websites. Specialized for some of my and my friends smaller websites.
-Supports multiple origins with separate SMTP configurations.
+Small contact-form delivery service for static websites. It uses a controlled
+SMTP identity, routes each allowed website origin to its destination mailbox,
+and sets the visitor as `Reply-To`.
 
-## Setup
+## Commands
 
 ```bash
 bun install
+bun run dev
+bun run validate
+bun run start
+```
+
+Production requires `CONFIG_FILE`. Development can use the example:
+
+```bash
 cp origins.example.json origins.json
-# Edit origins.json with your SMTP credentials
+CONFIG_FILE=origins.json bun run dev
 ```
 
-## Configuration
+## Shared configuration
 
-Configuration is loaded from a JSON file specified by the `CONFIG_FILE` environment variable.
-
-### Environment Variables
-
-| Variable      | Description                                        |
-| ------------- | -------------------------------------------------- |
-| `CONFIG_FILE` | **Required.** Path to the origins JSON config file |
-| `PORT`        | Server port (default: 3000)                        |
-
-### Origins Config File
-
-The config file maps origin domains to their SMTP settings:
+The recommended format keeps one SMTP secret and only repeats public per-site
+routing data:
 
 ```json
 {
-  "https://example.com": {
-    "toEmail": "contact@example.com",
-    "smtp": {
-      "host": "smtp.example.com",
-      "port": 587,
-      "secure": false,
-      "user": "smtp-user@example.com",
-      "pass": "your-smtp-password"
-    }
+  "smtp": {
+    "host": "mail.your-server.de",
+    "port": 587,
+    "secure": false,
+    "user": "forms@example.com",
+    "pass": "secret",
+    "fromEmail": "forms@example.com",
+    "fromName": "Website contact forms"
   },
-  "https://another-site.com": {
-    "toEmail": "hello@another-site.com",
-    "smtp": {
-      "host": "smtp.another-provider.com",
-      "port": 465,
-      "secure": true,
-      "user": "noreply@another-site.com",
-      "pass": "another-smtp-password"
+  "sites": {
+    "https://example.com": {
+      "name": "Example Site",
+      "toEmail": "info@example.com"
+    },
+    "https://www.example.com": {
+      "name": "Example Site",
+      "toEmail": "info@example.com"
     }
   }
 }
 ```
 
-| Field         | Description                                          |
-| ------------- | ---------------------------------------------------- |
-| `toEmail`     | Recipient email address for contact form submissions |
-| `smtp.host`   | SMTP server hostname                                 |
-| `smtp.port`   | SMTP port (default: 587)                             |
-| `smtp.secure` | Use TLS (default: false, set true for port 465)      |
-| `smtp.user`   | SMTP username                                        |
-| `smtp.pass`   | SMTP password                                        |
+The previous per-origin SMTP format remains supported so the running service can
+be upgraded before its production configuration is migrated. Central
+registration requires the shared format.
 
-## Run
-
-### Development
+Sites may contain an optional `smtp` object when an existing origin must keep a
+different sending account. Convert a legacy file without exposing or manually
+copying credentials:
 
 ```bash
-CONFIG_FILE=./origins.json bun run dev
+bun run config:migrate -- --config origins.json
 ```
 
-### Production
+The migration selects the most-used account as the shared default, keeps other
+accounts as per-site overrides, and creates a timestamped backup first. Both the
+migration and central registration preserve the file's owner, group, and mode
+when replacing it atomically.
+
+## Register or update a site
+
+The central `vps-caddy` command invokes this idempotent command from the
+deployed Docker image, so the VPS does not need a separate Bun installation or
+an up-to-date source checkout. To run it directly from a source checkout:
 
 ```bash
-CONFIG_FILE=/path/to/origins.json bun run start
+bun run site:upsert -- \
+  --config origins.json \
+  --name-b64 RXhhbXBsZSBTaXRl \
+  --email-b64 aW5mb0BleGFtcGxlLmNvbQ== \
+  --origin https://example.com \
+  --origin https://www.example.com
 ```
 
-### Docker Compose
+Names and addresses are base64 encoded only to pass them safely through SSH;
+base64 is not encryption. The configuration file remains secret and must not be
+committed.
 
-```yaml
-services:
-  email-api:
-    build: .
-    ports:
-      - "3000:3000"
-    environment:
-      - CONFIG_FILE=/config/origins.json
-    volumes:
-      - ./origins.json:/config/origins.json:ro
-```
+## HTTP API
 
-## API
-
-### `POST /api/send`
-
-Send a contact form email. The request's `Origin` header determines which SMTP config is used.
-
-**Headers:**
-
-```
-Content-Type: application/json
-```
-
-**Body:**
+`POST /api/send` accepts JSON:
 
 ```json
 {
-  "email": "visitor@example.com",
-  "name": "John Doe",
-  "subject": "Hello",
-  "message": "I'd like to get in touch..."
+  "name": "Ada Lovelace",
+  "email": "ada@example.net",
+  "phone": "+49 123 456",
+  "message": "Hello"
 }
 ```
 
-**Response:**
+`name`, `email`, and `message` are required. `phone` is optional. A successful
+request returns `{ "success": true }`.
 
-```json
-{ "success": true }
-```
+`GET /healthz` returns service status and the number of configured origins.
 
-**Error Responses:**
+## Runtime environment
 
-- `403 Forbidden` - Origin not in config file
-- `400 Bad Request` - Invalid JSON or missing fields
-- `429 Too Many Requests` - Rate limited
-- `500 Internal Server Error` - SMTP failure
+| Variable         |  Default | Description                                            |
+| ---------------- | -------: | ------------------------------------------------------ |
+| `CONFIG_FILE`    | required | JSON configuration path                                |
+| `PORT`           |   `3000` | HTTP port                                              |
+| `TRUST_PROXY`    |  `false` | Trust the first Caddy-provided `X-Forwarded-For` value |
+| `RATE_LIMIT`     |      `5` | Requests allowed per IP/window                         |
+| `RATE_WINDOW_MS` |  `60000` | Rate-limit window                                      |
 
-## Usage from Static Site
+Set `TRUST_PROXY=true` only when the service is reachable exclusively through a
+trusted reverse proxy. The Docker Compose configuration binds to localhost and
+enables this mode for Caddy.
 
-```javascript
-async function sendContactForm(data) {
-  const response = await fetch("https://your-api.com/api/send", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(data),
-  });
+The deployment workflow validates and installs the Compose file from the exact
+Git revision being deployed before it restarts the service. The production
+`origins.json` file is never fetched or replaced.
 
-  if (!response.ok) {
-    const { error } = await response.json();
-    throw new Error(error);
-  }
+## Security boundary
 
-  return response.json();
-}
-
-// Example
-sendContactForm({
-  email: "visitor@example.com",
-  name: "John Doe",
-  subject: "Hello",
-  message: "I'd like to get in touch...",
-});
-```
-
-## Security
-
-- **CORS**: Only origins defined in the config file are allowed
-- **Rate Limiting**: 5 requests per minute per IP address
-- **No API Key**: Authentication relies on CORS origin validation
+- SMTP passwords stay only in the mounted production configuration.
+- The visitor address is `Reply-To`, never the SMTP envelope sender.
+- Origins are allowlisted and CORS headers are emitted only for those origins.
+- Origin/CORS checks are not authentication; rate limiting and the honeypot are
+  the abuse controls. Add a server-verified challenge if a site attracts abuse.
+- Bodies and individual fields have explicit size limits.
+- Logs exclude message bodies and SMTP credentials.

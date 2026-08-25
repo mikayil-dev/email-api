@@ -6,6 +6,8 @@ export interface SmtpConfig {
   secure: boolean;
   user: string;
   pass: string;
+  fromEmail: string;
+  fromName: string;
 }
 
 export interface OriginConfig {
@@ -16,35 +18,203 @@ export interface OriginConfig {
 
 export interface AppConfig {
   port: number;
+  trustProxy: boolean;
+  rateLimit: number;
+  rateWindowMs: number;
   origins: Map<string, OriginConfig>;
 }
 
-interface OriginConfigJson {
+interface SmtpConfigJson {
+  host: string;
+  port?: number;
+  secure?: boolean;
+  user: string;
+  pass: string;
+  fromEmail?: string;
+  fromName?: string;
+}
+
+interface SiteConfigJson {
   name: string;
   toEmail: string;
-  smtp: {
-    host: string;
-    port?: number;
-    secure?: boolean;
-    user: string;
-    pass: string;
+  smtp?: SmtpConfigJson;
+}
+
+interface LegacyOriginConfigJson extends SiteConfigJson {
+  smtp: SmtpConfigJson;
+}
+
+interface SharedConfigJson {
+  smtp: SmtpConfigJson;
+  sites: Record<string, SiteConfigJson>;
+}
+
+type LegacyConfigJson = Record<string, LegacyOriginConfigJson>;
+
+function parseBoolean(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined) return fallback;
+  return value.toLowerCase() === "true";
+}
+
+function parsePositiveInteger(
+  value: string | undefined,
+  fallback: number,
+  name: string,
+): number {
+  if (value === undefined) return fallback;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  return parsed;
+}
+
+function normalizeOrigin(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`Invalid origin URL: ${value}`);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(`Origin must use HTTP or HTTPS: ${value}`);
+  }
+  if (
+    url.pathname !== "/" ||
+    url.search ||
+    url.hash ||
+    url.username ||
+    url.password
+  ) {
+    throw new Error(
+      `Origin must not contain a path, credentials, query, or hash: ${value}`,
+    );
+  }
+  return url.origin;
+}
+
+function parseSmtp(value: unknown, context: string): SmtpConfig {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`Missing or invalid SMTP config for ${context}`);
+  }
+  const smtp = value as Partial<SmtpConfigJson>;
+  if (
+    typeof smtp.host !== "string" ||
+    !smtp.host ||
+    typeof smtp.user !== "string" ||
+    !smtp.user ||
+    typeof smtp.pass !== "string" ||
+    !smtp.pass
+  ) {
+    throw new Error(
+      `Missing required SMTP fields (host, user, pass) for ${context}`,
+    );
+  }
+  const port = smtp.port ?? 587;
+  if (!Number.isSafeInteger(port) || port <= 0 || port > 65535) {
+    throw new Error(`Invalid SMTP port for ${context}`);
+  }
+  return {
+    host: smtp.host,
+    port,
+    secure: smtp.secure ?? port === 465,
+    user: smtp.user,
+    pass: smtp.pass,
+    fromEmail: smtp.fromEmail ?? smtp.user,
+    fromName: smtp.fromName ?? "Website contact forms",
   };
 }
 
-type ConfigFileJson = Record<string, OriginConfigJson>;
+function parseSite(value: unknown, origin: string): SiteConfigJson {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`Invalid site config for origin: ${origin}`);
+  }
+  const site = value as Partial<SiteConfigJson>;
+  if (typeof site.name !== "string" || !site.name.trim()) {
+    throw new Error(`Missing or invalid name for origin: ${origin}`);
+  }
+  if (typeof site.toEmail !== "string" || !site.toEmail.includes("@")) {
+    throw new Error(`Missing or invalid toEmail for origin: ${origin}`);
+  }
+  return { name: site.name.trim(), toEmail: site.toEmail.trim() };
+}
 
-function loadConfig(): AppConfig {
-  const configPath = process.env.CONFIG_FILE;
-  if (!configPath) {
-    throw new Error("Missing required environment variable: CONFIG_FILE");
+function isSharedConfig(
+  value: Record<string, unknown>,
+): value is Record<string, unknown> & SharedConfigJson {
+  return "smtp" in value && "sites" in value;
+}
+
+export function parseConfig(
+  value: unknown,
+  environment: NodeJS.ProcessEnv = process.env,
+): AppConfig {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Config file must be a JSON object");
+  }
+  const json = value as Record<string, unknown>;
+  const origins = new Map<string, OriginConfig>();
+
+  if (isSharedConfig(json)) {
+    const sharedSmtp = parseSmtp(json.smtp, "shared configuration");
+    if (
+      typeof json.sites !== "object" ||
+      json.sites === null ||
+      Array.isArray(json.sites)
+    ) {
+      throw new Error("Shared config sites must be an object");
+    }
+    for (const [rawOrigin, rawSite] of Object.entries(json.sites)) {
+      const origin = normalizeOrigin(rawOrigin);
+      const site = parseSite(rawSite, origin);
+      const smtp = rawSite.smtp ? parseSmtp(rawSite.smtp, origin) : sharedSmtp;
+      if (origins.has(origin)) {
+        throw new Error(`Duplicate normalized origin: ${origin}`);
+      }
+      origins.set(origin, { ...site, smtp });
+    }
+  } else {
+    for (const [rawOrigin, rawConfig] of Object.entries(
+      json as LegacyConfigJson,
+    )) {
+      const origin = normalizeOrigin(rawOrigin);
+      const site = parseSite(rawConfig, origin);
+      const smtp = parseSmtp(rawConfig.smtp, origin);
+      if (origins.has(origin)) {
+        throw new Error(`Duplicate normalized origin: ${origin}`);
+      }
+      origins.set(origin, { ...site, smtp });
+    }
   }
 
+  if (origins.size === 0) {
+    throw new Error("Config file must contain at least one site origin");
+  }
+
+  return {
+    port: parsePositiveInteger(environment.PORT, 3000, "PORT"),
+    trustProxy: parseBoolean(environment.TRUST_PROXY, false),
+    rateLimit: parsePositiveInteger(environment.RATE_LIMIT, 5, "RATE_LIMIT"),
+    rateWindowMs: parsePositiveInteger(
+      environment.RATE_WINDOW_MS,
+      60_000,
+      "RATE_WINDOW_MS",
+    ),
+    origins,
+  };
+}
+
+export function loadConfig(
+  configPath: string,
+  environment = process.env,
+): AppConfig {
   let fileContent: string;
   try {
     fileContent = readFileSync(configPath, "utf-8");
-  } catch (err) {
+  } catch (error) {
     throw new Error(
-      `Failed to read config file at ${configPath}: ${err instanceof Error ? err.message : String(err)}`,
+      `Failed to read config file at ${configPath}: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
     );
   }
 
@@ -54,60 +224,25 @@ function loadConfig(): AppConfig {
   } catch {
     throw new Error(`Invalid JSON in config file: ${configPath}`);
   }
-
-  if (typeof json !== "object" || json === null || Array.isArray(json)) {
-    throw new Error("Config file must be a JSON object");
-  }
-
-  const configJson = json as ConfigFileJson;
-  const origins = new Map<string, OriginConfig>();
-
-  for (const [origin, originConfig] of Object.entries(configJson)) {
-    if (!originConfig.toEmail || typeof originConfig.toEmail !== "string") {
-      throw new Error(`Missing or invalid toEmail for origin: ${origin}`);
-    }
-    if (!originConfig.smtp || typeof originConfig.smtp !== "object") {
-      throw new Error(`Missing or invalid smtp config for origin: ${origin}`);
-    }
-
-    const { smtp } = originConfig;
-    if (!smtp.host || !smtp.user || !smtp.pass) {
-      throw new Error(
-        `Missing required smtp fields (host, user, pass) for origin: ${origin}`,
-      );
-    }
-
-    origins.set(origin, {
-      name: originConfig.name,
-      toEmail: originConfig.toEmail,
-      smtp: {
-        host: smtp.host,
-        port: smtp.port ?? 587,
-        secure: smtp.secure ?? false,
-        user: smtp.user,
-        pass: smtp.pass,
-      },
-    });
-  }
-
-  if (origins.size === 0) {
-    throw new Error("Config file must contain at least one origin");
-  }
-
-  return {
-    port: Number(process.env.PORT) || 3000,
-    origins,
-  };
+  return parseConfig(json, environment);
 }
 
-export const config = loadConfig();
+const configPath = process.env.CONFIG_FILE;
+if (!configPath) {
+  throw new Error("Missing required environment variable: CONFIG_FILE");
+}
+
+export const config = loadConfig(configPath);
 
 export function getOriginConfig(origin: string | null): OriginConfig | null {
   if (!origin) return null;
-  return config.origins.get(origin) ?? null;
+  try {
+    return config.origins.get(normalizeOrigin(origin)) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export function isAllowedOrigin(origin: string | null): boolean {
-  if (!origin) return false;
-  return config.origins.has(origin);
+  return getOriginConfig(origin) !== null;
 }

@@ -1,46 +1,50 @@
 import { config, getOriginConfig, isAllowedOrigin } from "./config";
 import { sendContactEmail } from "./mailer";
+import { RateLimiter } from "./rate-limiter";
+
 import type { ContactFormData } from "./mailer";
 
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-const RATE_LIMIT = 5;
-const RATE_WINDOW_MS = 60_000;
+const MAX_BODY_BYTES = 32_768;
+const rateLimiter = new RateLimiter(config.rateLimit, config.rateWindowMs);
 
-function isRateLimited(ip: string): boolean {
-  const now = Date.now();
-  const entry = rateLimitMap.get(ip);
-
-  if (!entry || now > entry.resetAt) {
-    rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_WINDOW_MS });
-    return false;
-  }
-
-  entry.count++;
-  return entry.count > RATE_LIMIT;
+function isStringWithin(
+  value: unknown,
+  minimum: number,
+  maximum: number,
+): value is string {
+  return (
+    typeof value === "string" &&
+    value.length >= minimum &&
+    value.length <= maximum
+  );
 }
 
 function validateBody(body: unknown): body is ContactFormData {
-  if (typeof body !== "object" || body === null) return false;
-  const b = body as Record<string, unknown>;
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return false;
+  }
+  const value = body as Record<string, unknown>;
   return (
-    typeof b.email === "string" &&
-    typeof b.name === "string" &&
-    typeof b.message === "string" &&
-    ((b.phone && typeof b.phone === "string" && b.phone.length > 0) ||
-      !b.phone) &&
-    b.email.includes("@") &&
-    b.name.length > 0 &&
-    b.message.length > 0
+    isStringWithin(value.email, 3, 320) &&
+    value.email.includes("@") &&
+    isStringWithin(value.name, 1, 160) &&
+    isStringWithin(value.message, 1, 10_000) &&
+    (value.phone === undefined || isStringWithin(value.phone, 1, 80)) &&
+    (value.website === undefined || typeof value.website === "string")
   );
 }
 
 function corsHeaders(origin: string | null): HeadersInit {
-  const allowedOrigin = origin && isAllowedOrigin(origin) ? origin : "";
-  return {
-    "Access-Control-Allow-Origin": allowedOrigin,
+  const headers: Record<string, string> = {
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Max-Age": "86400",
+    Vary: "Origin",
   };
+  if (origin && isAllowedOrigin(origin)) {
+    headers["Access-Control-Allow-Origin"] = origin;
+  }
+  return headers;
 }
 
 function json(
@@ -50,94 +54,111 @@ function json(
 ): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "Content-Type": "application/json", ...headers },
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+      ...headers,
+    },
   });
 }
 
 function log(
   level: "info" | "warn" | "error",
   message: string,
-  meta?: Record<string, unknown>,
+  meta: Record<string, unknown> = {},
 ): void {
-  const entry = {
+  const output = JSON.stringify({
     timestamp: new Date().toISOString(),
     level,
     message,
     ...meta,
-  };
-  const output = JSON.stringify(entry);
-  if (level === "error") {
-    console.error(output);
-  } else if (level === "warn") {
-    console.warn(output);
-  } else {
-    console.info(output);
-  }
+  });
+  if (level === "error") console.error(output);
+  else if (level === "warn") console.warn(output);
+  else console.info(output);
+}
+
+function requestIp(req: Request, serverIp: string): string {
+  if (!config.trustProxy) return serverIp;
+  return req.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() || serverIp;
 }
 
 const server = Bun.serve({
   port: config.port,
-
   async fetch(req) {
     const url = new URL(req.url);
     const origin = req.headers.get("Origin");
     const cors = corsHeaders(origin);
 
+    if (url.pathname === "/healthz" && req.method === "GET") {
+      return json({ status: "ok", sites: config.origins.size }, 200);
+    }
+    if (url.pathname !== "/api/send") {
+      return json({ error: "Not found" }, 404, cors);
+    }
     if (req.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: cors });
     }
-
-    const ip =
-      req.headers.get("X-Forwarded-For")?.split(",")[0].trim() ??
-      server.requestIP(req)?.address ??
-      "unknown";
-
-    if (url.pathname !== "/api/send" || req.method !== "POST") {
-      log("warn", "Not found", { ip, path: url.pathname, method: req.method });
-      return json({ error: "Not found" }, 404, cors);
+    if (req.method !== "POST") {
+      return json({ error: "Method not allowed" }, 405, cors);
     }
 
+    const serverIp = server.requestIP(req)?.address ?? "unknown";
+    const ip = requestIp(req, serverIp);
     const originConfig = getOriginConfig(origin);
     if (!originConfig) {
       log("warn", "Forbidden origin", { ip, origin });
       return json({ error: "Forbidden" }, 403, cors);
     }
-
-    if (isRateLimited(ip)) {
+    if (rateLimiter.isLimited(ip)) {
       log("warn", "Rate limited", { ip });
       return json({ error: "Too many requests" }, 429, cors);
     }
 
-    let body: unknown;
-    try {
-      body = await req.json();
-    } catch {
-      log("warn", "Invalid JSON", { ip });
-      return json({ error: "Invalid JSON" }, 400, cors);
+    const contentLength = Number(req.headers.get("Content-Length") ?? 0);
+    if (contentLength > MAX_BODY_BYTES) {
+      return json({ error: "Request too large" }, 413, cors);
     }
 
+    let body: unknown;
+    try {
+      const text = await req.text();
+      if (new TextEncoder().encode(text).byteLength > MAX_BODY_BYTES) {
+        return json({ error: "Request too large" }, 413, cors);
+      }
+      body = JSON.parse(text);
+    } catch {
+      return json({ error: "Invalid JSON" }, 400, cors);
+    }
     if (!validateBody(body)) {
-      log("warn", "Invalid body", { ip });
       return json(
         { error: "Invalid body. Required: email, name, message" },
         400,
         cors,
       );
     }
+    if (body.website) {
+      log("info", "Discarded honeypot submission", { ip, origin });
+      return json({ success: true }, 200, cors);
+    }
 
     try {
       await sendContactEmail(body, originConfig);
       log("info", "Email sent", { ip, origin });
       return json({ success: true }, 200, cors);
-    } catch (err) {
+    } catch (error) {
       log("error", "Failed to send email", {
         ip,
         origin,
-        error: err instanceof Error ? err.message : String(err),
+        error: error instanceof Error ? error.message : String(error),
       });
       return json({ error: "Failed to send email" }, 500, cors);
     }
   },
 });
 
-log("info", "Server started", { port: server.port });
+log("info", "Server started", {
+  port: server.port,
+  sites: config.origins.size,
+  trustProxy: config.trustProxy,
+});
