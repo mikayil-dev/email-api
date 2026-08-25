@@ -7,6 +7,7 @@
     "start": "bun src/index.ts",
     "site:upsert": "bun src/admin.ts",
     "config:migrate": "bun src/migrate-config.ts",
+    "origins:reconcile-www": "bun src/reconcile-www.ts",
     "test": "CONFIG_FILE=origins.example.json bun test",
     "lint": "node node_modules/eslint/bin/eslint.js src/",
     "lint:fix": "node node_modules/eslint/bin/eslint.js src/ --fix",

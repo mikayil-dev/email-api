@@ -66,6 +66,15 @@ accounts as per-site overrides, and creates a timestamped backup first. Both the
 migration and central registration preserve the file's owner, group, and mode
 when replacing it atomically.
 
+Reconcile mandatory `www` origins for an already migrated configuration with:
+
+```bash
+bun run origins:reconcile-www -- --config origins.json
+```
+
+The command copies each primary site's complete routing configuration, skips
+localhost and IP origins, creates a backup, and is safe to run repeatedly.
+
 ## Register or update a site
 
 The central `vps-caddy` command invokes this idempotent command from the
