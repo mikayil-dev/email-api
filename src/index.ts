@@ -2,9 +2,17 @@ import { config, getOriginConfig, isAllowedOrigin } from "./config";
 import { validateContactFormData } from "./contact-form";
 import { sendContactEmail } from "./mailer";
 import { RateLimiter } from "./rate-limiter";
+import {
+  BodyTooLargeError,
+  MAX_BODY_BYTES,
+  readLimitedBody,
+} from "./request-body";
 
-const MAX_BODY_BYTES = 32_768;
 const rateLimiter = new RateLimiter(config.rateLimit, config.rateWindowMs);
+const recipientLimiter = new RateLimiter(
+  config.recipientRateLimit,
+  config.rateWindowMs,
+);
 
 function corsHeaders(origin: string | null): HeadersInit {
   const headers: Record<string, string> = {
@@ -57,6 +65,7 @@ function requestIp(req: Request, serverIp: string): string {
 
 const server = Bun.serve({
   port: config.port,
+  maxRequestBodySize: MAX_BODY_BYTES,
   async fetch(req) {
     const url = new URL(req.url);
     const origin = req.headers.get("Origin");
@@ -87,19 +96,14 @@ const server = Bun.serve({
       return json({ error: "Too many requests" }, 429, cors);
     }
 
-    const contentLength = Number(req.headers.get("Content-Length") ?? 0);
-    if (contentLength > MAX_BODY_BYTES) {
-      return json({ error: "Request too large" }, 413, cors);
-    }
-
     let body: unknown;
     try {
-      const text = await req.text();
-      if (new TextEncoder().encode(text).byteLength > MAX_BODY_BYTES) {
+      const text = await readLimitedBody(req);
+      body = JSON.parse(text);
+    } catch (error) {
+      if (error instanceof BodyTooLargeError) {
         return json({ error: "Request too large" }, 413, cors);
       }
-      body = JSON.parse(text);
-    } catch {
       return json({ error: "Invalid JSON" }, 400, cors);
     }
     if (!validateContactFormData(body)) {
@@ -112,6 +116,11 @@ const server = Bun.serve({
     if (body.website) {
       log("info", "Discarded honeypot submission", { ip, origin });
       return json({ success: true }, 200, cors);
+    }
+
+    // Share the budget across primary/www origins and rotating client IPs.
+    if (recipientLimiter.isLimited(originConfig.toEmail.toLowerCase())) {
+      return json({ error: "Too many requests" }, 429, cors);
     }
 
     try {

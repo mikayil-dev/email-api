@@ -10,6 +10,7 @@ export class RateLimiter {
   public constructor(
     private readonly limit: number,
     private readonly windowMs: number,
+    private readonly maxEntries = 10_000,
   ) {}
 
   public isLimited(key: string, now = Date.now()): boolean {
@@ -17,6 +18,10 @@ export class RateLimiter {
     if (this.operations % 100 === 0) this.prune(now);
     const entry = this.entries.get(key);
     if (!entry || now >= entry.resetAt) {
+      if (!entry && this.entries.size >= this.maxEntries) {
+        this.prune(now);
+        if (this.entries.size >= this.maxEntries) return true;
+      }
       this.entries.set(key, { count: 1, resetAt: now + this.windowMs });
       return false;
     }

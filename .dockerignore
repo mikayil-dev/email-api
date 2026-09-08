@@ -5,5 +5,5 @@ AGENTS.md
 README.md
 node_modules
 origins.json
+origins.json.*
 src/*.test.ts
-

@@ -114,13 +114,14 @@ request returns `{ "success": true }`.
 
 ## Runtime environment
 
-| Variable         |  Default | Description                                            |
-| ---------------- | -------: | ------------------------------------------------------ |
-| `CONFIG_FILE`    | required | JSON configuration path                                |
-| `PORT`           |   `3000` | HTTP port                                              |
-| `TRUST_PROXY`    |  `false` | Trust the first Caddy-provided `X-Forwarded-For` value |
-| `RATE_LIMIT`     |      `5` | Requests allowed per IP/window                         |
-| `RATE_WINDOW_MS` |  `60000` | Rate-limit window                                      |
+| Variable               |  Default | Description                                                                   |
+| ---------------------- | -------: | ----------------------------------------------------------------------------- |
+| `CONFIG_FILE`          | required | JSON configuration path                                                       |
+| `PORT`                 |   `3000` | HTTP port                                                                     |
+| `TRUST_PROXY`          |  `false` | Trust the first Caddy-provided `X-Forwarded-For` value                        |
+| `RATE_LIMIT`           |      `5` | Requests allowed per IP/window                                                |
+| `RECIPIENT_RATE_LIMIT` |     `20` | Valid submissions per recipient mailbox/window, shared across origins and IPs |
+| `RATE_WINDOW_MS`       |  `60000` | Rate-limit window                                                             |
 
 Set `TRUST_PROXY=true` only when the service is reachable exclusively through a
 trusted reverse proxy. The Docker Compose configuration binds to localhost and
@@ -138,4 +139,14 @@ Git revision being deployed before it restarts the service. The production
 - Origin/CORS checks are not authentication; rate limiting and the honeypot are
   the abuse controls. Add a server-verified challenge if a site attracts abuse.
 - Bodies and individual fields have explicit size limits.
+- The 32 KiB body limit is enforced by Bun and during streaming, even without a
+  Content-Length header. Oversized streams are cancelled before JSON parsing.
+- Each recipient mailbox has a shared submission budget (20/minute by default),
+  so rotating IPs or switching between primary/www origins does not bypass it.
+  Honeypot and invalid submissions do not consume this mailbox budget. Limits
+  are in-memory, reset on restart, and apply per process; they are not a CAPTCHA
+  or protection against a determined distributed denial of service.
+- Rate-limit maps hold at most 10,000 keys each and reject new keys when full
+  until entries expire. Env variants and origins.json backups are ignored by
+  Git and excluded from Docker builds. This does not remove previously tracked secrets.
 - Logs exclude message bodies and SMTP credentials.

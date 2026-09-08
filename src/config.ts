@@ -21,6 +21,7 @@ export interface AppConfig {
   trustProxy: boolean;
   rateLimit: number;
   rateWindowMs: number;
+  recipientRateLimit: number;
   origins: Map<string, OriginConfig>;
 }
 
@@ -195,6 +196,11 @@ export function parseConfig(
     port: parsePositiveInteger(environment.PORT, 3000, "PORT"),
     trustProxy: parseBoolean(environment.TRUST_PROXY, false),
     rateLimit: parsePositiveInteger(environment.RATE_LIMIT, 5, "RATE_LIMIT"),
+    recipientRateLimit: parsePositiveInteger(
+      environment.RECIPIENT_RATE_LIMIT,
+      20,
+      "RECIPIENT_RATE_LIMIT",
+    ),
     rateWindowMs: parsePositiveInteger(
       environment.RATE_WINDOW_MS,
       60_000,
