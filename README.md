@@ -94,6 +94,28 @@ Names and addresses are base64 encoded only to pass them safely through SSH;
 base64 is not encryption. The configuration file remains secret and must not be
 committed.
 
+## Contact-form sender
+
+Show which sender and recipient every origin uses (no passwords are printed):
+
+```bash
+bun run smtp:sender -- --config origins.json
+```
+
+Switch the shared sender for all sites that have no own SMTP account. Sites
+passed with `--keep` (their `www` origin is included) stay on the previous
+shared account as an override. The password is read from stdin, the file is
+backed up first and written atomically:
+
+```bash
+printf '%s' "$SMTP_PASS" | bun run smtp:sender -- --config origins.json \
+  --host mail.your-server.de --user formular@example.com \
+  --from-name "Website-Kontaktformular" \
+  --keep https://example-owner-site.de
+```
+
+Restart the service afterwards (`docker compose restart email-api`).
+
 ## HTTP API
 
 `POST /api/send` accepts JSON:
