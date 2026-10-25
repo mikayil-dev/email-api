@@ -46,37 +46,23 @@ jobs:
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/email-api:buildcache
           cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/email-api:buildcache,mode=max
 
-      - name: Deploy on VPS
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 2222
-          script: |
-            set -eu
-
-            cd /srv/email-api
-
-            candidate=$(mktemp docker-compose.yml.XXXXXX)
-            trap 'rm -f "$candidate"' EXIT
-            curl --fail --silent --show-error --location \
-              "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/docker-compose.yml" \
-              --output "$candidate"
-            docker compose -f "$candidate" config --quiet
-            install -m 0644 "$candidate" docker-compose.yml
-            rm -f "$candidate"
-            trap - EXIT
-
-            docker compose pull email-api
-            docker compose up -d email-api
-            curl --fail --retry 10 --retry-all-errors \
-              --retry-delay 3 http://127.0.0.1:3411/healthz >/dev/null
-
-            # One-time: drop the origins the site manifests now provide.
-            docker compose run --rm --no-deps --user 0:0 \
-              --volume /srv/email-api:/site-config email-api \
-              bun src/slim-config.ts --config /site-config/origins.json --sites /config/sites
-            docker compose restart email-api
-            curl --fail --retry 10 --retry-all-errors \
-              --retry-delay 3 http://127.0.0.1:3411/healthz
+      - name: Deploy on VPS (restricted key, vps-app-update email.pikcode.de)
+        env:
+          DEPLOY_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_KEY" > "$HOME/.ssh/deploy_key"
+          chmod 600 "$HOME/.ssh/deploy_key"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+          ssh \
+            -i "$HOME/.ssh/deploy_key" \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -p "${{ vars.DEPLOY_SSH_PORT }}" \
+            "${{ vars.DEPLOY_SSH_USER }}@${{ vars.DEPLOY_SSH_HOST }}" \
+            update </dev/null
+          curl --fail --retry 10 --retry-all-errors --retry-delay 3 \
+            https://email.pikcode.de/healthz
