@@ -25,19 +25,24 @@ src/config.ts          Shared and backward-compatible legacy config parsing
 src/index.ts           HTTP routing, validation, CORS, logging, rate limits
 src/mailer.ts          Pooled SMTP transport and message construction
 src/rate-limiter.ts    Bounded-window in-memory limiter
-src/admin.ts           Atomic, idempotent central site registration
+src/sites.ts           Reads vps-caddy site manifests (SITES_DIR) as origins
+src/sender.ts          Lists senders, switches the shared SMTP account
+src/slim-config.ts     Drops origins the manifests provide, and www origins
 origins.example.json   Recommended shared SMTP/sites configuration
 ```
 
 ## Configuration contract
 
-The preferred production format contains one `smtp` object and a `sites` map.
-Both the primary origin and its mandatory `www` origin must be registered. The
-legacy format with SMTP nested under each origin remains readable only for safe
-migration; do not add new functionality that writes legacy configuration.
+Allowed origins come from the vps-caddy site manifests (`SITES_DIR`, every
+static site with a `contactEmail`, primary domain only) plus the explicit
+`sites` map of `origins.json`, which wins. There is no registration step and no
+`www` origin: `www` always redirects to the primary domain. The production
+format contains one `smtp` object; the legacy format with SMTP nested under
+each origin remains readable only for safe migration; do not add new
+functionality that writes legacy configuration.
 
-`src/admin.ts` must preserve file permissions and update the configuration with
-an atomic rename. It must never print SMTP settings or file contents.
+Tools that rewrite `origins.json` must preserve file permissions, back it up,
+update it with an atomic rename, and never print SMTP settings or file contents.
 
 ## Security
 
@@ -63,6 +68,9 @@ an atomic rename. It must never print SMTP settings or file contents.
 
 ## Deployment integration
 
-The sibling `vps-caddy` CLI calls `bun run site:upsert` over the existing admin
-SSH connection, then restarts the Compose service. Keep this command idempotent
-and backward compatible at the CLI argument level.
+The app is registered in `vps-caddy` as `sites/email.pikcode.de.json` (mode
+`app`, port 3411, directory `/srv/email-api`). The deploy workflow pushes the
+image and then runs `vps-app-update` through this repository's restricted
+deploy key (`DEPLOY_SSH_*`); it has no other server access. The manifest
+format of `vps-caddy/sites/*.json` (`domain`, `contactEmail`, `projectName`,
+`mode`) is the contract `src/sites.ts` reads; keep both sides in step.

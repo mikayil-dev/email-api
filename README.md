@@ -20,10 +20,21 @@ cp origins.example.json origins.json
 CONFIG_FILE=origins.json bun run dev
 ```
 
-## Shared configuration
+## Which sites may send
 
-The recommended format keeps one SMTP secret and only repeats public per-site
-routing data:
+Two sources, both read at runtime:
+
+1. **Site manifests of vps-caddy** (`SITES_DIR`, mounted read-only from
+   `/srv/vps-caddy/sites`). Every static site whose manifest has a
+   `contactEmail` may send from `https://<domain>`; the subject names its
+   `projectName`. A new site therefore works as soon as its first deployment has
+   applied the Caddy configuration (the server checkout follows `main`). The
+   manifests are re-read once a minute, so no restart and no registration is
+   needed. `www` origins are not allowed and not needed: every `www` hostname
+   redirects to its primary domain before a form is shown.
+2. **`origins.json`** (`CONFIG_FILE`, secret, only on the server): the shared
+   SMTP account plus explicit entries that win over manifests, for sites with an
+   own SMTP account (the HM sites) or without a manifest.
 
 ```json
 {
@@ -39,76 +50,43 @@ routing data:
   "sites": {
     "https://example.com": {
       "name": "Example Site",
-      "toEmail": "info@example.com"
-    },
-    "https://www.example.com": {
-      "name": "Example Site",
-      "toEmail": "info@example.com"
+      "toEmail": "info@example.com",
+      "smtp": { "host": "…", "user": "…", "pass": "…" }
     }
   }
 }
 ```
 
-The previous per-origin SMTP format remains supported so the running service can
-be upgraded before its production configuration is migrated. Central
-registration requires the shared format.
-
-Sites may contain an optional `smtp` object when an existing origin must keep a
-different sending account. Convert a legacy file without exposing or manually
-copying credentials:
+`sites` may be empty when `SITES_DIR` is set. The previous per-origin SMTP format
+(no top-level `smtp`) remains readable but ignores manifests; convert it without
+copying credentials by hand:
 
 ```bash
 bun run config:migrate -- --config origins.json
 ```
 
-The migration selects the most-used account as the shared default, keeps other
-accounts as per-site overrides, and creates a timestamped backup first. Both the
-migration and central registration preserve the file's owner, group, and mode
-when replacing it atomically.
-
-Reconcile mandatory `www` origins for an already migrated configuration with:
+Drop explicit entries that the manifests already provide, and all `www`
+origins of configured sites (a backup is written first):
 
 ```bash
-bun run origins:reconcile-www -- --config origins.json
+bun run config:slim -- --config origins.json --sites ../vps-caddy/sites
 ```
-
-The command copies each primary site's complete routing configuration, skips
-localhost and IP origins, creates a backup, and is safe to run repeatedly.
-
-## Register or update a site
-
-The central `vps-caddy` command invokes this idempotent command from the
-deployed Docker image, so the VPS does not need a separate Bun installation or
-an up-to-date source checkout. To run it directly from a source checkout:
-
-```bash
-bun run site:upsert -- \
-  --config origins.json \
-  --name-b64 RXhhbXBsZSBTaXRl \
-  --email-b64 aW5mb0BleGFtcGxlLmNvbQ== \
-  --origin https://example.com \
-  --origin https://www.example.com
-```
-
-Names and addresses are base64 encoded only to pass them safely through SSH;
-base64 is not encryption. The configuration file remains secret and must not be
-committed.
 
 ## Contact-form sender
 
 Show which sender and recipient every origin uses (no passwords are printed):
 
 ```bash
-bun run smtp:sender -- --config origins.json
+bun run smtp:sender -- --config origins.json --sites /srv/vps-caddy/sites
 ```
 
 Switch the shared sender for all sites that have no own SMTP account. Sites
-passed with `--keep` (their `www` origin is included) stay on the previous
-shared account as an override. The password is read from stdin, the file is
+passed with `--keep` stay on the previous shared account as an override (a
+site known only from its manifest gets an explicit entry). The password is read from stdin, the file is
 backed up first and written atomically:
 
 ```bash
-printf '%s' "$SMTP_PASS" | bun run smtp:sender -- --config origins.json \
+printf '%s' "$SMTP_PASS" | bun run smtp:sender -- --config origins.json --sites /srv/vps-caddy/sites \
   --host mail.your-server.de --user formular@example.com \
   --from-name "Website-Kontaktformular" \
   --keep https://example-owner-site.de
@@ -132,13 +110,14 @@ Restart the service afterwards (`docker compose restart email-api`).
 `name`, `email`, and `message` are required. `phone` is optional. A successful
 request returns `{ "success": true }`.
 
-`GET /healthz` returns service status and the number of configured origins.
+`GET /healthz` returns service status and the number of allowed origins.
 
 ## Runtime environment
 
 | Variable               |  Default | Description                                                                   |
 | ---------------------- | -------: | ----------------------------------------------------------------------------- |
 | `CONFIG_FILE`          | required | JSON configuration path                                                       |
+| `SITES_DIR`            |     none | Directory of vps-caddy site manifests that add origins                        |
 | `PORT`                 |   `3000` | HTTP port                                                                     |
 | `TRUST_PROXY`          |  `false` | Trust the first Caddy-provided `X-Forwarded-For` value                        |
 | `RATE_LIMIT`           |      `5` | Requests allowed per IP/window                                                |
@@ -149,9 +128,14 @@ Set `TRUST_PROXY=true` only when the service is reachable exclusively through a
 trusted reverse proxy. The Docker Compose configuration binds to localhost and
 enables this mode for Caddy.
 
-The deployment workflow validates and installs the Compose file from the exact
-Git revision being deployed before it restarts the service. The production
-`origins.json` file is never fetched or replaced.
+## Deployment
+
+A push to `main` builds and pushes the image to GHCR. The deploy key of this
+repository may only run `vps-app-update email.pikcode.de` on the VPS (pull and
+restart the app in `/srv/email-api`, see vps-caddy README, "Apps"). The
+Compose file on the server is not replaced by deployments; change it there
+when `docker-compose.yml` changes. The production `origins.json` file is never
+fetched or replaced.
 
 ## Security boundary
 
@@ -164,7 +148,7 @@ Git revision being deployed before it restarts the service. The production
 - The 32 KiB body limit is enforced by Bun and during streaming, even without a
   Content-Length header. Oversized streams are cancelled before JSON parsing.
 - Each recipient mailbox has a shared submission budget (20/minute by default),
-  so rotating IPs or switching between primary/www origins does not bypass it.
+  so rotating IPs or switching origins does not bypass it.
   Honeypot and invalid submissions do not consume this mailbox budget. Limits
   are in-memory, reset on restart, and apply per process; they are not a CAPTCHA
   or protection against a determined distributed denial of service.

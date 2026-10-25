@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { parseConfig } from "./config";
+import { parseConfig, resolveOrigin } from "./config";
 
 const smtp = {
   host: "smtp.example.com",
@@ -9,7 +9,7 @@ const smtp = {
 };
 
 describe("parseConfig", () => {
-  test("shares one SMTP configuration across primary and www origins", () => {
+  test("shares one SMTP configuration across origins", () => {
     const config = parseConfig(
       {
         smtp,
@@ -69,6 +69,39 @@ describe("parseConfig", () => {
     expect(config.origins.get("https://example.com")?.smtp.user).toBe(
       "other@example.com",
     );
+  });
+
+  test("adds manifest origins with the shared account; explicit entries win", () => {
+    const config = parseConfig(
+      {
+        smtp,
+        sites: {
+          "https://own.de": {
+            name: "Own",
+            toEmail: "own@own.de",
+            smtp: { ...smtp, user: "own@own.de" },
+          },
+        },
+      },
+      { SITES_DIR: "/srv/vps-caddy/sites" },
+    );
+    const manifests = new Map([
+      ["https://a.de", { name: "A", toEmail: "info@a.de" }],
+      ["https://own.de", { name: "Own", toEmail: "own@own.de" }],
+    ]);
+    expect(resolveOrigin(config, "https://a.de", manifests)?.smtp.user).toBe(
+      "forms@example.com",
+    );
+    expect(resolveOrigin(config, "https://own.de", manifests)?.smtp.user).toBe(
+      "own@own.de",
+    );
+    expect(resolveOrigin(config, "https://www.a.de", manifests)).toBeNull();
+  });
+
+  test("allows an empty sites map when manifests are read", () => {
+    const config = parseConfig({ smtp }, { SITES_DIR: "/srv/vps-caddy/sites" });
+    expect(config.origins.size).toBe(0);
+    expect(() => parseConfig({ smtp }, {})).toThrow("at least one site origin");
   });
 
   test("rejects origins with paths", () => {

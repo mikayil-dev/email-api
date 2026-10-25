@@ -8,7 +8,6 @@ const raw = {
   smtp: oldSmtp,
   sites: {
     "https://keep.example": { name: "Keep", toEmail: "keep@example.com" },
-    "https://www.keep.example": { name: "Keep", toEmail: "keep@example.com" },
     "https://client.example": { name: "Client", toEmail: "c@example.com" },
     "https://own.example": { name: "Own", toEmail: "o@example.com", smtp: own },
   },
@@ -26,19 +25,10 @@ const change = {
 describe("switchSharedSender", () => {
   test("switches the shared sender and pins kept origins to the old one", () => {
     const result = switchSharedSender(raw, change);
-    expect(result.kept).toEqual([
-      "https://keep.example",
-      "https://www.keep.example",
-    ]);
+    expect(result.kept).toEqual(["https://keep.example"]);
     expect(listSenders(result.config)).toEqual([
       {
         origin: "https://keep.example",
-        fromEmail: "old@example.com",
-        toEmail: "keep@example.com",
-        override: true,
-      },
-      {
-        origin: "https://www.keep.example",
         fromEmail: "old@example.com",
         toEmail: "keep@example.com",
         override: true,
@@ -56,6 +46,23 @@ describe("switchSharedSender", () => {
         override: true,
       },
     ]);
+  });
+
+  test("pins a kept origin that only its manifest knows", () => {
+    const manifests = new Map([
+      ["https://site.example", { name: "Site", toEmail: "s@example.com" }],
+    ]);
+    const result = switchSharedSender(
+      raw,
+      { ...change, keepOrigins: ["https://site.example"] },
+      manifests,
+    );
+    expect(result.kept).toEqual(["https://site.example"]);
+    expect(result.config.sites["https://site.example"]).toEqual({
+      name: "Site",
+      toEmail: "s@example.com",
+      smtp: oldSmtp,
+    });
   });
 
   test("never pins the new account and keeps existing overrides", () => {

@@ -72,3 +72,11 @@ jobs:
             docker compose up -d email-api
             curl --fail --retry 10 --retry-all-errors \
               --retry-delay 3 http://127.0.0.1:3411/healthz >/dev/null
+
+            # One-time: drop the origins the site manifests now provide.
+            docker compose run --rm --no-deps --user 0:0 \
+              --volume /srv/email-api:/site-config email-api \
+              bun src/slim-config.ts --config /site-config/origins.json --sites /config/sites
+            docker compose restart email-api
+            curl --fail --retry 10 --retry-all-errors \
+              --retry-delay 3 http://127.0.0.1:3411/healthz

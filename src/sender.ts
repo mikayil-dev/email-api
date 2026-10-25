@@ -8,6 +8,8 @@ import {
 } from "node:fs/promises";
 import { resolve } from "node:path";
 
+import { readManifestSites, type ManifestSite } from "./sites";
+
 interface SharedConfig {
   smtp: Record<string, unknown>;
   sites: Record<string, unknown>;
@@ -32,6 +34,7 @@ export interface SenderChange {
 
 interface Arguments {
   config: string;
+  sites: Map<string, ManifestSite>;
   change: Omit<SenderChange, "pass"> | null;
 }
 
@@ -63,10 +66,21 @@ function normalizeOrigin(value: string): string {
   return url.origin;
 }
 
+/** Every origin with its routing: explicit entries win over manifests. */
+function allSites(
+  config: SharedConfig,
+  manifests: Map<string, ManifestSite>,
+): Record<string, unknown> {
+  return { ...Object.fromEntries(manifests), ...config.sites };
+}
+
 /** Lists which sender and recipient every origin uses, without secrets. */
-export function listSenders(raw: unknown): SenderRow[] {
+export function listSenders(
+  raw: unknown,
+  manifests = new Map<string, ManifestSite>(),
+): SenderRow[] {
   const config = sharedConfig(raw);
-  return Object.entries(config.sites).map(([origin, site]) => {
+  return Object.entries(allSites(config, manifests)).map(([origin, site]) => {
     const override = isObject(site) && isObject(site.smtp);
     const smtp = override
       ? (site.smtp as Record<string, unknown>)
@@ -80,28 +94,24 @@ export function listSenders(raw: unknown): SenderRow[] {
 }
 
 /**
- * Replaces the shared SMTP account. Origins in `keepOrigins` (and their www
- * counterparts) that use the shared account keep the previous one as an
- * override, so only the remaining sites switch to the new sender.
+ * Replaces the shared SMTP account. Origins in `keepOrigins` that use the
+ * shared account keep the previous one as an override (an origin known only
+ * from its manifest gets an explicit entry), so only the remaining sites
+ * switch to the new sender.
  */
 export function switchSharedSender(
   raw: unknown,
   change: SenderChange,
+  manifests = new Map<string, ManifestSite>(),
 ): { config: SharedConfig; kept: string[] } {
   const config = sharedConfig(raw);
   const previous = config.smtp;
-  const keep = new Set<string>();
-  for (const origin of change.keepOrigins) {
-    const url = new URL(origin);
-    keep.add(url.origin);
-    if (!url.hostname.startsWith("www.")) {
-      url.hostname = `www.${url.hostname}`;
-      keep.add(url.origin);
-    }
-  }
+  const keep = new Set(
+    change.keepOrigins.map((origin) => new URL(origin).origin),
+  );
   const sites = { ...config.sites };
   const kept: string[] = [];
-  for (const [origin, site] of Object.entries(sites)) {
+  for (const [origin, site] of Object.entries(allSites(config, manifests))) {
     if (!keep.has(origin) || !isObject(site) || isObject(site.smtp)) continue;
     sites[origin] = { ...site, smtp: previous };
     kept.push(origin);
@@ -126,8 +136,12 @@ function option(values: string[], name: string): string | undefined {
 
 function parseArguments(values: string[]): Arguments {
   const config = option(values, "--config") ?? fail("Expected --config");
+  const sitesDir = option(values, "--sites");
+  const sites = sitesDir
+    ? readManifestSites(resolve(sitesDir))
+    : new Map<string, ManifestSite>();
   const user = option(values, "--user");
-  if (!user) return { config: resolve(config), change: null };
+  if (!user) return { config: resolve(config), sites, change: null };
   const port = Number(option(values, "--port") ?? "587");
   if (!Number.isInteger(port) || port <= 0) fail("Invalid --port");
   const keepOrigins = values
@@ -136,6 +150,7 @@ function parseArguments(values: string[]): Arguments {
     .map(normalizeOrigin);
   return {
     config: resolve(config),
+    sites,
     change: {
       host: option(values, "--host") ?? fail("Expected --host"),
       port,
@@ -152,8 +167,8 @@ async function readPassword(): Promise<string> {
   return pass || fail("Pass the SMTP password on stdin");
 }
 
-function printSenders(raw: unknown): void {
-  for (const row of listSenders(raw)) {
+function printSenders(raw: unknown, sites: Map<string, ManifestSite>): void {
+  for (const row of listSenders(raw, sites)) {
     const marker = row.override ? " (eigenes Konto)" : "";
     console.info(`${row.origin}: ${row.fromEmail}${marker} -> ${row.toEmail}`);
   }
@@ -166,14 +181,15 @@ async function main(): Promise<void> {
     fail(`Config file does not exist: ${args.config}`);
   const raw: unknown = await file.json();
   if (!args.change) {
-    printSenders(raw);
+    printSenders(raw, args.sites);
     return;
   }
 
-  const result = switchSharedSender(raw, {
-    ...args.change,
-    pass: await readPassword(),
-  });
+  const result = switchSharedSender(
+    raw,
+    { ...args.change, pass: await readPassword() },
+    args.sites,
+  );
   const metadata = await stat(args.config);
   const mode = metadata.mode & 0o777;
   const timestamp = new Date().toISOString().replaceAll(":", "-");
@@ -189,7 +205,7 @@ async function main(): Promise<void> {
   await chown(temporary, metadata.uid, metadata.gid);
   await rename(temporary, args.config);
   console.info(`Backup: ${backup}`);
-  printSenders(result.config);
+  printSenders(result.config, args.sites);
 }
 
 if (import.meta.main) await main();

@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 
+import { readManifestSites, type ManifestSite } from "./sites";
+
 export interface SmtpConfig {
   host: string;
   port: number;
@@ -22,7 +24,12 @@ export interface AppConfig {
   rateLimit: number;
   rateWindowMs: number;
   recipientRateLimit: number;
+  /** Explicit origins of the config file; they win over manifests. */
   origins: Map<string, OriginConfig>;
+  /** Account of every origin without its own; null in the legacy format. */
+  sharedSmtp: SmtpConfig | null;
+  /** vps-caddy site manifests that add origins (SITES_DIR). */
+  sitesDir: string | null;
 }
 
 interface SmtpConfigJson {
@@ -47,7 +54,7 @@ interface LegacyOriginConfigJson extends SiteConfigJson {
 
 interface SharedConfigJson {
   smtp: SmtpConfigJson;
-  sites: Record<string, SiteConfigJson>;
+  sites?: Record<string, SiteConfigJson>;
 }
 
 type LegacyConfigJson = Record<string, LegacyOriginConfigJson>;
@@ -143,7 +150,7 @@ function parseSite(value: unknown, origin: string): SiteConfigJson {
 function isSharedConfig(
   value: Record<string, unknown>,
 ): value is Record<string, unknown> & SharedConfigJson {
-  return "smtp" in value && "sites" in value;
+  return "smtp" in value;
 }
 
 export function parseConfig(
@@ -155,17 +162,16 @@ export function parseConfig(
   }
   const json = value as Record<string, unknown>;
   const origins = new Map<string, OriginConfig>();
+  const sitesDir = environment.SITES_DIR || null;
+  let sharedSmtp: SmtpConfig | null = null;
 
   if (isSharedConfig(json)) {
-    const sharedSmtp = parseSmtp(json.smtp, "shared configuration");
-    if (
-      typeof json.sites !== "object" ||
-      json.sites === null ||
-      Array.isArray(json.sites)
-    ) {
+    sharedSmtp = parseSmtp(json.smtp, "shared configuration");
+    const sites = json.sites ?? {};
+    if (typeof sites !== "object" || sites === null || Array.isArray(sites)) {
       throw new Error("Shared config sites must be an object");
     }
-    for (const [rawOrigin, rawSite] of Object.entries(json.sites)) {
+    for (const [rawOrigin, rawSite] of Object.entries(sites)) {
       const origin = normalizeOrigin(rawOrigin);
       const site = parseSite(rawSite, origin);
       const smtp = rawSite.smtp ? parseSmtp(rawSite.smtp, origin) : sharedSmtp;
@@ -188,8 +194,10 @@ export function parseConfig(
     }
   }
 
-  if (origins.size === 0) {
-    throw new Error("Config file must contain at least one site origin");
+  if (origins.size === 0 && !(sitesDir && sharedSmtp)) {
+    throw new Error(
+      "Config file must contain at least one site origin, or SITES_DIR with a shared smtp",
+    );
   }
 
   return {
@@ -207,6 +215,8 @@ export function parseConfig(
       "RATE_WINDOW_MS",
     ),
     origins,
+    sharedSmtp,
+    sitesDir,
   };
 }
 
@@ -240,10 +250,46 @@ if (!configPath) {
 
 export const config = loadConfig(configPath);
 
+const MANIFEST_TTL_MS = 60_000;
+let manifestCache = { loadedAt: 0, sites: new Map<string, ManifestSite>() };
+
+/** Manifest origins, re-read at most once a minute so new sites need no restart. */
+export function manifestSites(
+  appConfig: AppConfig = config,
+  now = Date.now(),
+): Map<string, ManifestSite> {
+  if (!appConfig.sitesDir || !appConfig.sharedSmtp) return new Map();
+  if (now - manifestCache.loadedAt >= MANIFEST_TTL_MS) {
+    manifestCache = {
+      loadedAt: now,
+      sites: readManifestSites(appConfig.sitesDir),
+    };
+  }
+  return manifestCache.sites;
+}
+
+export function resolveOrigin(
+  appConfig: AppConfig,
+  origin: string,
+  sites: Map<string, ManifestSite>,
+): OriginConfig | null {
+  const explicit = appConfig.origins.get(origin);
+  if (explicit) return explicit;
+  const site = sites.get(origin);
+  return site && appConfig.sharedSmtp
+    ? { ...site, smtp: appConfig.sharedSmtp }
+    : null;
+}
+
+export function originCount(): number {
+  const all = new Set([...config.origins.keys(), ...manifestSites().keys()]);
+  return all.size;
+}
+
 export function getOriginConfig(origin: string | null): OriginConfig | null {
   if (!origin) return null;
   try {
-    return config.origins.get(normalizeOrigin(origin)) ?? null;
+    return resolveOrigin(config, normalizeOrigin(origin), manifestSites());
   } catch {
     return null;
   }

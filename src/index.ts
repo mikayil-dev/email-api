@@ -1,4 +1,9 @@
-import { config, getOriginConfig, isAllowedOrigin } from "./config";
+import {
+  config,
+  getOriginConfig,
+  isAllowedOrigin,
+  originCount,
+} from "./config";
 import { validateContactFormData } from "./contact-form";
 import { sendContactEmail } from "./mailer";
 import { RateLimiter } from "./rate-limiter";
@@ -72,7 +77,7 @@ const server = Bun.serve({
     const cors = corsHeaders(origin);
 
     if (url.pathname === "/healthz" && req.method === "GET") {
-      return json({ status: "ok", sites: config.origins.size }, 200);
+      return json({ status: "ok", sites: originCount() }, 200);
     }
     if (url.pathname !== "/api/send") {
       return json({ error: "Not found" }, 404, cors);
@@ -118,7 +123,7 @@ const server = Bun.serve({
       return json({ success: true }, 200, cors);
     }
 
-    // Share the budget across primary/www origins and rotating client IPs.
+    // Share the budget across origins and rotating client IPs.
     if (recipientLimiter.isLimited(originConfig.toEmail.toLowerCase())) {
       return json({ error: "Too many requests" }, 429, cors);
     }
@@ -140,6 +145,6 @@ const server = Bun.serve({
 
 log("info", "Server started", {
   port: server.port,
-  sites: config.origins.size,
+  sites: originCount(),
   trustProxy: config.trustProxy,
 });

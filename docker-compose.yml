@@ -8,8 +8,11 @@ services:
     environment:
       - PORT=3000
       - CONFIG_FILE=/config/origins.json
+      # Site manifests of vps-caddy: every site with a contactEmail is allowed.
+      - SITES_DIR=/config/sites
       - TRUST_PROXY=true
       - RATE_LIMIT=5
       - RATE_WINDOW_MS=60000
     volumes:
       - ./origins.json:/config/origins.json:ro
+      - /srv/vps-caddy/sites:/config/sites:ro

@@ -12,10 +12,6 @@
     "https://example.com": {
       "name": "Example Site",
       "toEmail": "contact@example.com"
-    },
-    "https://www.example.com": {
-      "name": "Example Site",
-      "toEmail": "contact@example.com"
     }
   }
 }
