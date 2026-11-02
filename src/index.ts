@@ -93,11 +93,11 @@ const server = Bun.serve({
     const ip = requestIp(req, serverIp);
     const originConfig = getOriginConfig(origin);
     if (!originConfig) {
-      log("warn", "Forbidden origin", { ip, origin });
+      log("warn", "Forbidden origin", { origin });
       return json({ error: "Forbidden" }, 403, cors);
     }
     if (rateLimiter.isLimited(ip)) {
-      log("warn", "Rate limited", { ip });
+      log("warn", "Rate limited", { origin });
       return json({ error: "Too many requests" }, 429, cors);
     }
 
@@ -119,7 +119,7 @@ const server = Bun.serve({
       );
     }
     if (body.website) {
-      log("info", "Discarded honeypot submission", { ip, origin });
+      log("info", "Discarded honeypot submission", { origin });
       return json({ success: true }, 200, cors);
     }
 
@@ -130,11 +130,10 @@ const server = Bun.serve({
 
     try {
       await sendContactEmail(body, originConfig);
-      log("info", "Email sent", { ip, origin });
+      log("info", "Email sent", { origin });
       return json({ success: true }, 200, cors);
     } catch (error) {
       log("error", "Failed to send email", {
-        ip,
         origin,
         error: error instanceof Error ? error.message : String(error),
       });

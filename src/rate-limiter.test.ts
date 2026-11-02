@@ -19,6 +19,14 @@ describe("RateLimiter", () => {
     expect(limiter.isLimited("recipient@example.com", 2)).toBeTrue();
     expect(limiter.isLimited("other@example.com", 2)).toBeFalse();
   });
+  test("forgets expired keys without further requests", async () => {
+    const limiter = new RateLimiter(2, 20);
+    limiter.isLimited("203.0.113.7");
+    expect(limiter.size).toBe(1);
+    await Bun.sleep(70);
+    expect(limiter.size).toBe(0);
+  });
+
   test("limits a key within the window and resets afterwards", () => {
     const limiter = new RateLimiter(2, 1000);
     expect(limiter.isLimited("client", 0)).toBeFalse();

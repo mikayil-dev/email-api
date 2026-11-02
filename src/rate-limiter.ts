@@ -11,7 +11,14 @@ export class RateLimiter {
     private readonly limit: number,
     private readonly windowMs: number,
     private readonly maxEntries = 10_000,
-  ) {}
+  ) {
+    // Forget expired keys (client IPs) soon, not only on every 100th request.
+    setInterval(() => this.prune(Date.now()), windowMs).unref();
+  }
+
+  public get size(): number {
+    return this.entries.size;
+  }
 
   public isLimited(key: string, now = Date.now()): boolean {
     this.operations += 1;
