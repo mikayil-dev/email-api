@@ -3,6 +3,8 @@ import nodemailer from "nodemailer";
 import type { Transporter } from "nodemailer";
 import type { OriginConfig, SmtpConfig } from "./config";
 
+import { buildConfirmationEmail } from "./confirmation";
+
 export interface ContactFormData {
   email: string;
   name: string;
@@ -10,6 +12,8 @@ export interface ContactFormData {
   phone?: string;
   website?: string;
   kind?: ContactFormKind;
+  /** Send the visitor an automatic thank-you email. */
+  confirm?: boolean;
 }
 
 export const contactFormKinds = ["contact", "feedback"] as const;
@@ -73,4 +77,23 @@ function escapeHtml(value: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
+}
+
+export async function sendConfirmationEmail(
+  data: ContactFormData,
+  originConfig: OriginConfig,
+  origin: string,
+): Promise<void> {
+  const { smtp, toEmail, name: siteName } = originConfig;
+  const mail = buildConfirmationEmail(data.kind ?? "contact", siteName, origin);
+
+  await getTransport(smtp).sendMail({
+    from: { name: siteName, address: smtp.fromEmail },
+    replyTo: { name: siteName, address: toEmail },
+    to: data.email,
+    subject: mail.subject,
+    text: mail.text,
+    html: mail.html,
+    headers: { "Auto-Submitted": "auto-replied" },
+  });
 }

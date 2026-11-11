@@ -27,6 +27,8 @@ describe("validateContactFormData", () => {
     expect(validateContactFormData({ ...base, kind: "contact" })).toBe(true);
     expect(validateContactFormData({ ...base, kind: "Spam!" })).toBe(false);
     expect(validateContactFormData({ ...base, kind: 1 })).toBe(false);
+    expect(validateContactFormData({ ...base, confirm: true })).toBe(true);
+    expect(validateContactFormData({ ...base, confirm: "yes" })).toBe(false);
   });
 
   test("still rejects missing required fields", () => {

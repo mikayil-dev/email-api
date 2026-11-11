@@ -28,6 +28,7 @@ export function validateContactFormData(
     isStringWithin(value.message, 1, 10_000) &&
     (value.phone === undefined || isStringWithin(value.phone, 0, 80)) &&
     (value.website === undefined || typeof value.website === "string") &&
+    (value.confirm === undefined || typeof value.confirm === "boolean") &&
     (value.kind === undefined ||
       contactFormKinds.some((kind) => kind === value.kind))
   );
