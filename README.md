@@ -109,10 +109,7 @@ Restart the service afterwards (`docker compose restart email-api`).
 
 `name`, `email`, and `message` are required. `phone` is optional. `kind` is
 optional, `"contact"` (default) or `"feedback"`, and sets the subject tag
-(`[Contact]` or `[Feedback]`). `confirm: true` also sends the visitor a short
-German thank-you email (from the site's name, reply-to the site's inbox, at
-most one per address and day). It never repeats what the visitor typed. A
-successful request returns `{ "success": true }`.
+(`[Contact]` or `[Feedback]`). A successful request returns `{ "success": true }`.
 
 `GET /healthz` returns service status and the number of allowed origins.
 

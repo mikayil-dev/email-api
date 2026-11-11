@@ -5,7 +5,7 @@ import {
   originCount,
 } from "./config";
 import { validateContactFormData } from "./contact-form";
-import { sendConfirmationEmail, sendContactEmail } from "./mailer";
+import { sendContactEmail } from "./mailer";
 import { RateLimiter } from "./rate-limiter";
 import {
   BodyTooLargeError,
@@ -18,9 +18,6 @@ const recipientLimiter = new RateLimiter(
   config.recipientRateLimit,
   config.rateWindowMs,
 );
-// One automatic thank-you per visitor address and day, so a form cannot be
-// used to flood a third party's inbox.
-const confirmationLimiter = new RateLimiter(1, 24 * 60 * 60 * 1000);
 
 function corsHeaders(origin: string | null): HeadersInit {
   const headers: Record<string, string> = {
@@ -134,6 +131,7 @@ const server = Bun.serve({
     try {
       await sendContactEmail(body, originConfig);
       log("info", "Email sent", { origin });
+      return json({ success: true }, 200, cors);
     } catch (error) {
       log("error", "Failed to send email", {
         origin,
@@ -141,24 +139,6 @@ const server = Bun.serve({
       });
       return json({ error: "Failed to send email" }, 500, cors);
     }
-
-    if (
-      body.confirm &&
-      origin &&
-      !confirmationLimiter.isLimited(body.email.trim().toLowerCase())
-    ) {
-      try {
-        await sendConfirmationEmail(body, originConfig, origin);
-        log("info", "Confirmation sent", { origin });
-      } catch (error) {
-        // The enquiry itself arrived; a failed thank-you must not report an error.
-        log("warn", "Failed to send confirmation", {
-          origin,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-    return json({ success: true }, 200, cors);
   },
 });
 
