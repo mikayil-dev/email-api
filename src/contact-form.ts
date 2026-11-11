@@ -1,5 +1,7 @@
 import type { ContactFormData } from "./mailer";
 
+import { contactFormKinds } from "./mailer";
+
 function isStringWithin(
   value: unknown,
   minimum: number,
@@ -25,6 +27,8 @@ export function validateContactFormData(
     isStringWithin(value.name, 1, 160) &&
     isStringWithin(value.message, 1, 10_000) &&
     (value.phone === undefined || isStringWithin(value.phone, 0, 80)) &&
-    (value.website === undefined || typeof value.website === "string")
+    (value.website === undefined || typeof value.website === "string") &&
+    (value.kind === undefined ||
+      contactFormKinds.some((kind) => kind === value.kind))
   );
 }

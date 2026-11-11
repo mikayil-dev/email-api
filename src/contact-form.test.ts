@@ -17,6 +17,18 @@ describe("validateContactFormData", () => {
     ).toBe(true);
   });
 
+  test("accepts the feedback kind and rejects unknown kinds", () => {
+    const base = {
+      name: "Example Visitor",
+      email: "visitor@example.com",
+      message: "Great work.",
+    };
+    expect(validateContactFormData({ ...base, kind: "feedback" })).toBe(true);
+    expect(validateContactFormData({ ...base, kind: "contact" })).toBe(true);
+    expect(validateContactFormData({ ...base, kind: "Spam!" })).toBe(false);
+    expect(validateContactFormData({ ...base, kind: 1 })).toBe(false);
+  });
+
   test("still rejects missing required fields", () => {
     expect(
       validateContactFormData({

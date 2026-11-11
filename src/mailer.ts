@@ -9,7 +9,16 @@ export interface ContactFormData {
   message: string;
   phone?: string;
   website?: string;
+  kind?: ContactFormKind;
 }
+
+export const contactFormKinds = ["contact", "feedback"] as const;
+export type ContactFormKind = (typeof contactFormKinds)[number];
+
+const subjectTags: Record<ContactFormKind, string> = {
+  contact: "Contact",
+  feedback: "Feedback",
+};
 
 const transports = new Map<string, Transporter>();
 
@@ -38,7 +47,7 @@ export async function sendContactEmail(
   data: ContactFormData,
   originConfig: OriginConfig,
 ): Promise<void> {
-  const { email, name, message, phone } = data;
+  const { email, name, message, phone, kind = "contact" } = data;
   const { toEmail, smtp } = originConfig;
   const originName = originConfig.name;
 
@@ -46,7 +55,7 @@ export async function sendContactEmail(
     from: { name: smtp.fromName, address: smtp.fromEmail },
     replyTo: { name, address: email },
     to: toEmail,
-    subject: `[Contact] ${originName} — ${name}`,
+    subject: `[${subjectTags[kind]}] ${originName} — ${name}`,
     text: `From: ${name} <${email}>${phone ? ` <${phone}>` : ""}\n\nVia ${originName}\n\n${message}`,
     html: `
       <p><strong>From:</strong> ${escapeHtml(name)} — ${escapeHtml(email)}${phone ? ` — ${escapeHtml(phone)}` : ""}</p>

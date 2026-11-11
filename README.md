@@ -107,8 +107,9 @@ Restart the service afterwards (`docker compose restart email-api`).
 }
 ```
 
-`name`, `email`, and `message` are required. `phone` is optional. A successful
-request returns `{ "success": true }`.
+`name`, `email`, and `message` are required. `phone` is optional. `kind` is
+optional, `"contact"` (default) or `"feedback"`, and sets the subject tag
+(`[Contact]` or `[Feedback]`). A successful request returns `{ "success": true }`.
 
 `GET /healthz` returns service status and the number of allowed origins.
 
